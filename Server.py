@@ -86,12 +86,20 @@ class ServerProtocol(DatagramProtocol):
 
 	def datagramReceived(self, datagram, address):
 		"""Handle incoming datagram messages."""
+
+		#print message
+		print("Message received:")
 		print(datagram)
+		print("\n")
+
 		data_string = datagram.decode("utf-8")
 		msg_type = data_string[:2]
 
-		#holepuncher calls this when start_traversal is called by is_server parameter in true, 
-		#but now have to be changed
+
+
+		#####################################
+		# MESSAGES SEND BY HOLEPUNCHER NODE #
+		#####################################
 		if msg_type == "rs":
 			# register session
 			'''c_ip, c_port = address
@@ -159,11 +167,13 @@ class ServerProtocol(DatagramProtocol):
 			c_name = split[1]
 			self.client_checkout(c_name)
 			
+
+
+		########################################################
+		# MESSAGES USED BY GAME TO MANAGE PLAYERS AND SESSIONS #
+		########################################################
 		
-		
-		
-		#ADDED BY ME
-		#MESSAGE FORMAT: rp:usrName
+		# register client in the server || message format: [rp:username]
 		elif msg_type == "rp":
 			split = data_string.split(":")
 			username = split[1]		
@@ -195,8 +205,9 @@ class ServerProtocol(DatagramProtocol):
 		
 			#new_client = Client(username, str(user_id))
 		
-		#create session: cr:teams:players:private
+		# create session || message format: [cr:teams:players:private]
 		elif msg_type == "cs":
+			print("Message received: ")
 			print(data_string)
 			split = data_string.split(":")
 			player_id = split[1] #string
@@ -227,17 +238,48 @@ class ServerProtocol(DatagramProtocol):
 			self.transport.write(bytes('ok:'+s_id,"utf-8"), address)
 
 
-		#find session	
+		# client asked to find session with specified properties || message format: [fs:user_id:teams:players]
 		elif msg_type == "fs":
 			split = data_string.split(":")
 			
+			user_id = split[1]
+			player = self.registered_clients[user_id]
+			teams = split[2]
+			players = split[3]
+
+
+			# look for a session that has that properties and it's public
+			for session_id in self.active_sessions:
+				session = self.active_sessions[session_id]
+				if not session.private: #session is public
+					if session.players == players and session.teams == teams:
+						#add player to this session
+						
+						#send new player to all players in the room
+						for s_player in session.registered_clients:
+							p_address = (s_player.ip, s_player.port)
+							print(p_address)
+					
+							self.transport.write(bytes('np:'+player.name, "utf-8"), p_address)
+
+
+						# add client to session
+						session.register_client_at_session(player)
+
+						# print session users
+						self.print_sessions_and_players()
 			
-		#enter session
-		elif msg_type == "es":
-			split = data_string.split(":")
+						print("clients registered at session: " + str(len(session.registered_clients)))
+
+						print("session finded: " + s_id)
+
+						# send reponse to user
+						self.transport.write(bytes('ok:'+":" + s_id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
+
+
+
 			
-			
-		#find session by code	
+		# find session using session code || message format: [fc:user_id:session_code]	
 		elif msg_type == "fc":
 			split = data_string.split(":")
 			usr_id = split[1]
@@ -263,6 +305,7 @@ class ServerProtocol(DatagramProtocol):
 			for s_player in session.registered_clients:
 				p_address = (s_player.ip, s_player.port)
 				print(p_address)
+				
 				self.transport.write(bytes('np:'+player.name, "utf-8"), p_address)
 
 
@@ -272,14 +315,46 @@ class ServerProtocol(DatagramProtocol):
 			# print session users
 			self.print_sessions_and_players()
 		
+			print("clients registered at session: " + str(len(session.registered_clients)))
 
 			# send reponse to user
 			self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
 
 
-			
+		# client send sg message, so send server ip and port || message format: [sg:session_code:user_id]
+		elif msg_type == "sg":
+			split = data_string.split(":")
+			s_id = split[1]
+			client_id = split[2]
+
+			session = self.active_sessions[s_id]
+
+			server = session.registered_clients[0]
+
+			server_ip = server.ip
+			server_port = server.port
+
+
+			client = self.registered_clients[client_id]
+			client_port = client.port
+
+			self.transport.write(bytes('ok:'+server_ip+":"+str(server_port)+":"+str(client_port), "utf-8"), address)
+
+		# server (client) sends this to know the port in which wait other players messages || message format: [gp:session_code]
+		elif msg_type == "gp":
+			split = data_string.split(":")
+			s_id = split[1]
+
+			session = self.active_sessions[s_id]
+
+			server = session.registered_clients[0]
+
+			server_port = server.port
+
+			self.transport.write(bytes('ok:'+str(server_port), "utf-8"), address)
 	
-	
+
+
 	def generate_user_id(self):
 		self.next_player_id = self.next_player_id + 1
 		return self.next_player_id - 1 
@@ -341,13 +416,16 @@ class Session:
 			message = bytes( "peers:" + address_string, "utf-8")
 			self.server.transport.write(message, (addressed_client.ip, addressed_client.port))
 
+		print("Peer info has been sent")
+
+		'''
 		print("Peer info has been sent. Terminating Session")
 		for client in self.registered_clients:
 			print(type(client.name))
 			print(client.name)
 			#self.server.client_checkout(client.name)
 		#self.server.remove_session(self.id)
-
+		'''
 
 class Client:
 
