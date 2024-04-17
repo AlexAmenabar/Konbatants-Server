@@ -16,28 +16,45 @@ def address_to_string(address):
 class ServerProtocol(DatagramProtocol):
 
 	def __init__(self):
-		self.active_sessions = {} #session objects
-		self.registered_clients = {} #client objects
+		self.active_sessions = {} # session objects
+		self.registered_clients = {} # client objects
 		self.next_player_id = 0 # next player id will be this attribute value
 
+
+
+	#########################
+	# Helper functions #
+	#########################
+
+
+	# generates an id for a new registered user
+	def generate_user_id(self):
+		self.next_player_id = self.next_player_id + 1
+		return self.next_player_id - 1 
+
+
+	# generates random id for new session
+	def generate_random_id(self):
+		N = 8
+		return ''.join(random.choices(string.ascii_uppercase + string.digits, k=N))
+
+
+	# check if user id is already registered
 	def name_is_registered(self, name):
 		return name in self.registered_clients
 
-	def create_session(self, s_id, client_list):
-		if s_id in self.active_sessions:
-			print("Tried to create existing session")
-			return
 
-		self.active_sessions[s_id] = Session(s_id, client_list, self)
-
-	#this is the create_session that is used by me
+	# create a new session
 	def create_session2(self, s_id, players, private, teams):
-		#check is session exsit already?
+		# check is session exsit already?
+		if s_id in self.active_sessions.keys():
+			print("session with that id already created")
 
-		#create session and add it to the list
+		# create session and add it to the list
 		self.active_sessions[s_id] = Session(s_id, players, self, private, teams)
 
 
+	# removes a session from active sessions list
 	def remove_session(self, s_id):
 		try:
 			del self.active_sessions[s_id]
@@ -45,6 +62,7 @@ class ServerProtocol(DatagramProtocol):
 			print("Tried to terminate non-existing session")
 
 	
+	'''# reg
 	def register_client(self, c_name, c_session, c_ip, c_port):
 		if self.name_is_registered(c_name):
 			print("Client %s is already registered." % [c_name])
@@ -54,40 +72,49 @@ class ServerProtocol(DatagramProtocol):
 		else:
 			new_client = Client(c_name, c_session, c_ip, c_port)
 			self.registered_clients[c_name] = new_client
-			self.active_sessions[c_session].client_registered(new_client)
+			self.active_sessions[c_session].client_registered(new_client)'''
 	
 
-	#new register
+	# register a client in the server
 	def register_client2(self, c_username, c_id, c_ip, c_port):
-		if self.name_is_registered(c_id): # check if id is already used
+		# check if id is already used
+		if self.name_is_registered(c_id): 
 			print("Client %s is already registered." % [c_name])
 			return 1
 		else:
+			# create new client object and add it to registered clients list
 			new_client = Client(c_username, c_id, c_ip, c_port)
-			print("Client registered in server list " + c_id)
-			print(type(c_id))
+			#print("Client registered in server list " + c_id)
+			#print(type(c_id))
 			self.registered_clients[c_id] = new_client
 			print("Client registered correctly!")
 
 
+	# start exhchanging info between clients and server
 	def exchange_info(self, c_session):
 		if not c_session in self.active_sessions:
 			return
 		self.active_sessions[c_session].exchange_peer_info()
 
 
+	# remove a client from registered clients
+	def remove_client(self, client_id):
+		pass
+	'''
 	def client_checkout(self, name):
 		for client_name in self.registered_clients:
 			print(client_name)
 		try:
 			del self.registered_clients[name]
 		except KeyError:
-			print("Tried to checkout unregistered client")
+			print("Tried to checkout unregistered client")'''
 
+
+	# datagram received by server
 	def datagramReceived(self, datagram, address):
 		"""Handle incoming datagram messages."""
 
-		#print message
+		# print message
 		print("Message received:")
 		print(datagram)
 		print("\n")
@@ -98,7 +125,7 @@ class ServerProtocol(DatagramProtocol):
 
 
 		#####################################
-		# MESSAGES SEND BY HOLEPUNCHER NODE #
+		# MESSAGES SEND BY HOLEPUNCHER NODE # TO DELETE
 		#####################################
 		if msg_type == "rs":
 			# register session
@@ -173,89 +200,94 @@ class ServerProtocol(DatagramProtocol):
 		# MESSAGES USED BY GAME TO MANAGE PLAYERS AND SESSIONS #
 		########################################################
 		
+
 		# register client in the server || message format: [rp:username]
 		elif msg_type == "rp":
+			# get message information
 			split = data_string.split(":")
 			username = split[1]		
 			c_ip, c_port = address
 
-			valid = 1
 						
-			#check username is valid (length...)
-			
-			#TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTOODOTODTOOORDOOTODOTODO
-			
-			#generate id for this user
-			c_id = self.generate_user_id() #HAU HOBETO BEGIRATU BEHAR DA; METODO HOBEAK EGON DAITEZKE IDENTIFIKADOREA SORTZEKO
-			
-			#response
-			if(valid==1):	#username is valid	
-				#add user to user list
-				print("client will be registered, username: " + username + ", id: " + str(c_id) + ", ip: " + c_ip + ", port: " + str(c_port))
+			# check if username is valid (length...)
+			if len(username)>20:
+				# username not valid
 
-				res = self.register_client2(username, str(c_id), c_ip, c_port)
-				if(res == 1):
-					self.transport.write(bytes('e2:'+"server error","utf-8"), address)
+				'''send error message''' #TODO
+				pass
+			
 
-				#send user new id
-				self.transport.write(bytes('ok:'+str(c_id),"utf-8"), address)
-				
-			else:		#username is not valid
-				self.transport.write(bytes('e1:'+username,"utf-8"), address)
-		
-			#new_client = Client(username, str(user_id))
+			# generate an id for this user
+			c_id = self.generate_user_id()
+			
+
+
+			# add user to user list
+			print("client will be registered, username: " + username + ", id: " + str(c_id) + ", ip: " + c_ip + ", port: " + str(c_port))
+
+
+			# register client
+			res = self.register_client2(username, str(c_id), c_ip, c_port)
+			
+			if(res == 1):
+				self.transport.write(bytes('e2:'+"server error","utf-8"), address)
+
+			# send user id || message format: [ok:user_id]
+			self.transport.write(bytes('ok:'+str(c_id),"utf-8"), address)
+			
 		
 		# create session || message format: [cr:teams:players:private]
 		elif msg_type == "cs":
+			# print received message
 			print("Message received: ")
 			print(data_string)
+
+			# split data from datagram
 			split = data_string.split(":")
 			player_id = split[1] #string
 			teams = split[2]   # boolean
 			players = split[3] # int
 			private = split[4] # boolean
 
-			#generate random id for the session			
+			# generate random id for the session			
 			s_id = self.generate_random_id()
 
+			# print session id
 			print("Session with id: " + s_id + "created")
 
-			#add session to session list
+			# add session to session list
 			self.create_session2(s_id, players, private, teams)
 
-			#add player to the session
+			# add player to the session HELPER FUNCTION???
 			session = self.active_sessions[s_id]
 			player = self.registered_clients[player_id]
 			session.registered_clients.append(player)
 
-
-			#print all session and players for each session
-			#self.print_sessions_and_players()
-			#generate an id for the session
-			#client = 
-
-			#OK message + session id
+			# send ok message to client || message format [ok:session_id]
 			self.transport.write(bytes('ok:'+s_id,"utf-8"), address)
 
 
 		# client asked to find session with specified properties || message format: [fs:user_id:teams:players]
 		elif msg_type == "fs":
+			#split datagram information
 			split = data_string.split(":")
-			
 			user_id = split[1]
 			player = self.registered_clients[user_id]
 			teams = split[2]
 			players = split[3]
 
-
 			# look for a session that has that properties and it's public
 			for session_id in self.active_sessions:
+				# get session with id session_id
 				session = self.active_sessions[session_id]
-				if not session.private: #session is public
+
+				# check if session is public
+				if not session.private: 
+					# check session properties
 					if session.players == players and session.teams == teams:
-						#add player to this session
+						# add player to this session
 						
-						#send new player to all players in the room
+						# send new player to all players in the room
 						for s_player in session.registered_clients:
 							p_address = (s_player.ip, s_player.port)
 							print(p_address)
@@ -273,27 +305,26 @@ class ServerProtocol(DatagramProtocol):
 
 						print("session finded: " + s_id)
 
-						# send reponse to user
+						# send reponse to user || message format: [ok:session_id:teams:private:player_count:actual_player_count]
 						self.transport.write(bytes('ok:'+":" + s_id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
 
 
-
-			
 		# find session using session code || message format: [fc:user_id:session_code]	
 		elif msg_type == "fc":
+			#split information
 			split = data_string.split(":")
 			usr_id = split[1]
 			s_id = split[2]
 
 			print("Adding player to " + s_id + " session")
 
-			#check if user exists
+			# check if user exists
 
 
-			#check if session exists
+			# check if session exists
 
 
-			#Add user to session
+			# add user to session
 			session = self.active_sessions[s_id]
 
 			player = self.registered_clients[usr_id]
@@ -301,7 +332,7 @@ class ServerProtocol(DatagramProtocol):
 			print(address)
 			
 
-			#send new player to all players in the room
+			# send new player to all players in the room
 			for s_player in session.registered_clients:
 				p_address = (s_player.ip, s_player.port)
 				print(p_address)
@@ -352,17 +383,6 @@ class ServerProtocol(DatagramProtocol):
 			server_port = server.port
 
 			self.transport.write(bytes('ok:'+str(server_port), "utf-8"), address)
-	
-
-
-	def generate_user_id(self):
-		self.next_player_id = self.next_player_id + 1
-		return self.next_player_id - 1 
-
-	#for generating session ids
-	def generate_random_id(self):
-		N = 8
-		return ''.join(random.choices(string.ascii_uppercase + string.digits, k=N))
 
 
 	def print_sessions_and_players(self):
