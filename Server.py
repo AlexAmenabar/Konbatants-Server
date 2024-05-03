@@ -122,14 +122,14 @@ class ServerProtocol(DatagramProtocol):
 
 	
 	# register a client in the server
-	def register_client2(self, c_username, c_id, c_ip, c_port, p_ip, p_port):
+	def register_client2(self, c_username, c_id, c_ip, c_port, p_ip, p_port, peer_port):
 		# check if id is already used
 		if self.user_is_registered(c_id): 
 			print("Client %s is already registered." % [c_id])
 			return False
 		else:
 			# create new client object and add it to registered clients list
-			new_client = Client(c_username, c_id, c_ip, c_port, p_ip, p_port)
+			new_client = Client(c_username, c_id, c_ip, c_port, p_ip, p_port, peer_port)
 			self.registered_clients[c_id] = new_client
 			print("Client registered correctly!")
 			return True
@@ -186,13 +186,15 @@ class ServerProtocol(DatagramProtocol):
 		# MESSAGES USED BY GAME TO MANAGE PLAYERS AND SESSIONS #
 		########################################################
 		
-		# register client in the server || message format: [rp:username:private_ip:private_port]
+		# register client in the server || message format: [rp:username:private_ip:private_port:public_port]
 		if msg_type == "rp":
 			# get message information
 			split = data_string.split(":")
 			username = split[1]	
 			private_ip = split[2]
-			private_port = split[3]	
+			private_port = split[3]
+			public_port = split[4]
+
 			c_ip, c_port = address
 
 			# check if username is valid (length...)
@@ -213,7 +215,7 @@ class ServerProtocol(DatagramProtocol):
 			print("Client will be registered, username: " + username + ", id: " + str(c_id) + ", ip: " + c_ip + ", port: " + str(c_port))
 
 			# register client
-			if not self.register_client2(username, str(c_id), c_ip, c_port): # server internal error at registering
+			if not self.register_client2(username, str(c_id), c_ip, c_port, private_ip, private_port, public_port): # server internal error at registering
 				self.transport.write(bytes('e2:'+"server internal error at registering user","utf-8"), address)
 				return
 
@@ -522,7 +524,7 @@ class ServerProtocol(DatagramProtocol):
 			pass
 
 
-		# client send sg message, so send server ip and port || message format: [sg:session_code:user_id]
+		# client send sg message, so send server ip and port (public and private information) || message format: [sg:session_code:user_id]
 		elif msg_type == "sg":
 			split = data_string.split(":")
 			s_id = split[1]
@@ -546,11 +548,17 @@ class ServerProtocol(DatagramProtocol):
 			session_server_ip = session_server.ip
 			session_server_port = session_server.port
 
+			session_public_ip = session_server.ip
+			session_public_port = session_server.peer_port
+
+			session_private_server_ip = session_server.private_ip
+			session_private_server_port = session_server.private_port
+
 			user = self.registered_clients[user_id]
 			user_port = user.port
 
-			# send message || message format: [ok:server_port]
-			self.transport.write(bytes('ok:'+session_server_ip+":"+str(session_server_port)+":"+str(user_port), "utf-8"), address)
+			# send message || message format: [ok:server_peer_ip:server_peer_port:server_private_ip:server_private_port]
+			self.transport.write(bytes('ok:' + session_public_ip + ":" + str(session_public_port)+ ":" + session_private_server_ip + ":" + str(session_private_server_port), "utf-8"), address)
 
 
 		# session server (client) sends this to know the port in which wait other players messages || message format: [gp:session_code]
@@ -576,7 +584,7 @@ class ServerProtocol(DatagramProtocol):
 
 			# send session users usernames
 			for i in range(0, len(session.registered_clients)):
-				ip_port_list.append(session.registered_clients[i].ip + "-" + str(session.registered_clients[i].port))
+				ip_port_list.append(session.registered_clients[i].ip + "-" + str(session.registered_clients[i].peer_port) + "-" + session.registered_clients[i].private_ip + "-" + str(session.registered_clients[i].private_port))
 			
 			message = ":".join(ip_port_list)
 
@@ -639,15 +647,21 @@ class Client:
 		self.received_peer_info = True
 
 	#called when users registers
-	def __init__(self, c_username, c_name, c_ip, c_port, private_ip, private_port):
+	def __init__(self, c_username, c_name, c_ip, c_port, private_ip, private_port, peer_port):
 		self.username = c_username
 		self.name = c_name
 		self.session_id = None
 		self.ip = c_ip
 		self.port = c_port
+
+		self.received_peer_info = False	
+
+		# peer socket in client
+		self.peer_port = peer_port
+
+		# local net socket
 		self.private_ip = private_ip
 		self.private_port = private_port
-		self.received_peer_info = False	
 		
 	def add_ip_and_port(self, c_ip, c_port):
 		self.ip = c_ip
