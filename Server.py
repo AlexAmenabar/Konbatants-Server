@@ -46,13 +46,13 @@ class ServerProtocol(DatagramProtocol):
 
 	# check if session exists
 	def session_is_active(self, session):
-		return session in self.active_sessions
+		return session in self.active_sessions.keys()
 
 
 	# checks if a user is already in a server
 	def user_already_in_session(self, user_id):
 		user = self.registered_clients[user_id]
-		if user==None:
+		if user.session_id==None:
 			return False
 		return True
 
@@ -95,9 +95,9 @@ class ServerProtocol(DatagramProtocol):
 
 
 	# removes a user from registered clients list
-	def remove_user(self, user_id):
+	def remove_user(self, user):
 		try:
-			del self.registered_clients[user_id]
+			del user
 		except KeyError:
 			print("Player doesn't exist")
 
@@ -107,7 +107,7 @@ class ServerProtocol(DatagramProtocol):
 		# users leave session
 		session = self.active_sessions[s_id]
 		for user in session.registered_clients:
-			user.session_id = None
+			self.user_leave_session(user)
 
 		# quit session from list
 		session.registered_clients.clear()
@@ -120,7 +120,14 @@ class ServerProtocol(DatagramProtocol):
 		except KeyError:
 			print("Tried to terminate non-existing session")
 
-	
+
+	def user_leave_session(self, user):
+		session = self.active_sessions[user.session_id]
+		user.leave_session()
+
+		# remove user from sessio	
+		session.registered_clients.remove(user)
+
 	# register a client in the server
 	def register_client2(self, c_username, c_id, c_ip, c_port, p_ip, p_port, peer_port):
 		# check if id is already used
@@ -234,12 +241,13 @@ class ServerProtocol(DatagramProtocol):
 
 			# user doesn't exists
 			if not self.user_is_registered(player_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exists", "utf-8"), address)
+				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
 
 			# player already created a session (probably ok message lost)
 			if self.registered_clients[player_id].session_id != None:
-				# player is already in a session
+				# player is already in a session, get session id and send to player
+				s_id = self.get_user_session_id(player_id)
 				self.transport.write(bytes('ok:'+s_id,"utf-8"), address)
 			
 			# create session
@@ -265,23 +273,25 @@ class ServerProtocol(DatagramProtocol):
 			#split datagram information
 			split = data_string.split(":")
 			user_id = split[1]
-			player = self.registered_clients[user_id]
 			teams = split[2]
 			players = split[3]
 
-			s_id = self.get_user_session_id(user_id)
-
 			# user doesn't exists
 			if not self.user_is_registered(user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exists", "utf-8"), address)
+				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
 
-			# player is already in a session (probably packet lost)
-			if not s_id == None:
-				self.transport.write(bytes('ok:'+":" + s_id, "utf-8"), address)
+			player = self.registered_clients[user_id]
 
-			# player not in session
-			else:
+
+			# player is already in a session (probably packet lost)
+			s_id = self.get_user_session_id(user_id) # already in session
+			if not s_id == None:
+				session = self.active_sessions[s_id]
+				self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
+				return
+
+			else: # player not in session
 				session_finded = False
 				# look for a session that has that properties and it's public
 				for session_id in self.active_sessions:
@@ -318,26 +328,24 @@ class ServerProtocol(DatagramProtocol):
 
 							# send reponse to user || message format: [ok:session_id:teams:private:player_count:actual_player_count]
 							self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
-
 							
 				# no session with thoes properties
 				if not session_finded:
 					self.transport.write(bytes("er:Doesn't exist any session with that properties!", "utf-8"), address)
 	
 
-		# ask for session users usernames || message format: [su:session_id]
+		# ask for session users usernames || message format: [su:player_id]
 		elif msg_type == "su":
 			split = data_string.split(":")
-			session_id = split[1]
+			user_id = split[1]
 
-			# check if session exists
-			exists = self.session_is_active(session_id)
-			if not exists:
-				self.transport.write(bytes('er:'+"Server internal error, can't find that session.","utf-8"), address)			
-				return 
+			# check if player keeps in a session (maybe it has been deleted)
+			if self.registered_clients[user_id].session_id == None:
+				self.transport.write(bytes('err:'+"User not in a session (maybe removed?)", "utf-8"), address)
+				return
 
 			# get session object
-			session = self.active_sessions[session_id]
+			session = self.active_sessions[self.registered_clients[user_id].session_id]
 
 			username_list = []
 			# send session users usernames
@@ -359,15 +367,24 @@ class ServerProtocol(DatagramProtocol):
 
 			# user doesn't exists
 			if not self.user_is_registered(user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exists", "utf-8"), address)
+				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
+
+			# check if user is already in a session
+			player = self.registered_clients[user_id]
+			if player.session_id != None:
+				session = self.active_sessions[player.session_id]
+				self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + player.session_id, "utf-8"), address)
+				return
+
 
 			# session doesn't exists
 			if not self.session_is_active(s_id):
-				self.transport.write(bytes('er:'+"Server internal error, session doesn't exists", "utf-8"), address)
+				self.transport.write(bytes('er:'+"Session doesn't exists", "utf-8"), address)
 				return
 			
 			# session is full
+			print("Max_clients = " + str(self.active_sessions[s_id].client_max) + ", registered_clients = " + str(len(self.active_sessions[s_id].registered_clients)))
 			if int(self.active_sessions[s_id].client_max) <= len(self.active_sessions[s_id].registered_clients):
 				self.transport.write(bytes('er:'+"Session is full!", "utf-8"), address)
 				return 
@@ -376,11 +393,6 @@ class ServerProtocol(DatagramProtocol):
 			# get session and client objects
 			session = self.active_sessions[s_id]
 			player = self.registered_clients[user_id]
-
-			'''# send new player to all players in the room
-			for s_player in session.registered_clients:
-				p_address = (s_player.ip, s_player.port)				
-				self.transport.write(bytes('np:'+player.name, "utf-8"), p_address)'''
 
 			# add client to session
 			session.register_client_at_session(player)
@@ -391,129 +403,133 @@ class ServerProtocol(DatagramProtocol):
 			print("clients registered at session: " + str(len(session.registered_clients)))
 
 			# send reponse to user
-			self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
+			self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + player.session_id, "utf-8"), address)
 
 
-		# an user leaves a session || message format: [ls:session_id:user_id]
+		# an user leaves a session || message format: [ls:user_id]
 		elif msg_type == "ls":
 			split = data_string.split(":")
-			s_id = split[1]
-			user_id = split[2]
+			user_id = split[1]
 
 			# user doesn't exists
 			if not self.user_is_registered(user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exists", "utf-8"), address)
+				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
 
-			# session doesn't exists
-			if not self.session_is_active(s_id):
-				self.transport.write(bytes('er:'+"Session with that code doesn't exists", "utf-8"), address)
+			# user not in a session
+			user = self.registered_clients[user_id]
+			s_id = user.session_id
+			if user.session_id == None:
+				self.transport.write(bytes('er:'+"User not in a session", "utf-8"), address)
 				return
 
-			# user not in that session
-			if not self.user_is_in_session(s_id, user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exist in that session", "utf-8"), address)
-				return		
-
 			# user can't leave session when game is starting
-			session = self.active_sessions[s_id]
-			if len(session.registered_clients) == session.client_max:
+			session = self.active_sessions[user.session_id]
+			print("Client max: " + str(session.client_max) + ", registered clients: " + str(len(session.registered_clients)))
+			if len(session.registered_clients) == int(session.client_max):
+				print("session is full")
 				self.transport.write(bytes('er:'+"Session is full, you can't leave it now!", "utf-8"), address)
 				return	
 			
-			# leave session		
-			user = self.registered_clients[user_id]
-			user.leave_session()
+			# leave session
+			self.user_leave_session(user)
 
-			# remove user from server
-			session.registered_clients.remove(user)
 			self.transport.write(bytes('ok:'+s_id, "utf-8"), address)
 
-			# inform members of the session
-			'''for session_user in session.registered_clients:
-				p_address = (session_user.ip, session_user.port)
-				print(p_address)
-				self.transport.write(bytes('ls:'+session_user.name, "utf-8"), p_address)'''
 
-
-		# session server removes session || message format: [rs:session_id:user_id]
+		# session server removes session || message format: [rs:user_id]
 		elif msg_type == "rs":
 			split = data_string.split(":")
-			s_id = split[1]
-			user_id = split[2] # session server
-
+			user_id = split[1] # session server
+			print(user_id)
 
 			# user doesn't exists
 			if not self.user_is_registered(user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exists", "utf-8"), address)
+				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
 
-			# session doesn't exists
-			if not self.session_is_active(s_id):
-				self.transport.write(bytes('er:'+"Session with that code doesn't exists", "utf-8"), address)
+			# user not in a session
+			session_server = self.registered_clients[user_id]
+			s_id = session_server.session_id
+			if session_server.session_id == None:
+				self.transport.write(bytes('er:'+"User not in a session", "utf-8"), address)
 				return
 
-			# user not in that session
-			if not self.user_is_in_session(s_id, user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exist in that session", "utf-8"), address)
-				return		
+			# user not session admin
+			if self.active_sessions[s_id].registered_clients[0].name != user_id:
+				self.transport.write(bytes('er:'+"Only session admin can remove this session", "utf-8"), address)
+				return
 
-			# user can't leave session when game is starting
-			session = self.active_sessions[s_id]
-			if len(session.registered_clients) == session.client_max:
-				self.transport.write(bytes('er:'+"Session is full, you can't remove it now!", "utf-8"), address)
+			# user can't remove session when game is starting
+			session = self.active_sessions[session_server.session_id]
+			print("Client max: " + str(session.client_max) + ", registered clients: " + str(len(session.registered_clients)))
+			if len(session.registered_clients) == int(session.client_max):
+				print("session is full")
+				self.transport.write(bytes('er:'+"Session is full, you can't leave it now!", "utf-8"), address)
 				return	
 			
 
+			# remove session
 			session = self.active_sessions[s_id]
-			session_server = self.registered_clients[user_id]
-
-			# user leave session
-			session_server.leave_session()
 
 			# drop session
 			self.remove_session(s_id)
 
 			# send ok message
 			self.transport.write(bytes('ok:', "utf-8"), address)
-
-
-			# SEND MESSAGE TO SESSION PLAYERS????
 			
 
 		# user exited game || message format: [eg:user_id]
 		elif msg_type == "eg":
 			split = data_string.split(":")
-			session_id = split[1]
-			user_id = split[2]
+			user_id = split[1]
 
 			# user doesn't exists
 			if not self.user_is_registered(user_id):
 				self.transport.write(bytes('er:'+"Server internal error, user doesn't exists", "utf-8"), address)
 				return
 
+			# remove user from clients list
+			user = self.registered_clients[user_id]
+			self.registered_clients.pop(user_id)
 
-			# session doesn't exists
-			if not self.session_is_active(session_id):
-				self.transport.write(bytes('er:'+"Session with that code doesn't exists", "utf-8"), address)
+			if user.session_id == None:
+				self.transport.write(bytes('ok:'+"User not in a session", "utf-8"), address)
 				return
 
-			# user not in that session
-			if not self.user_is_in_session(session_id, user_id):
-				self.transport.write(bytes('er:'+"Server internal error, user doesn't exist in that session", "utf-8"), address)
-				return		
-
 			# delete user from session
-			user = self.registered_clients[user_id]
+			if user.session_id != None:
+				session = self.active_sessions[user.session_id]
+				session_id = session.id
 
-			session = self.active_sessions[session_id]
-			session.registered_clients.remove(user)
+				# if is session admin remove session too
+				if session.registered_clients[0].name == user.name:
+					self.active_sessions.pop(session_id)
 
-			# remove user from memory and registered clients list
-			self.remove_user(user_id)
-			
-			##INFORM USERS THAT HAS LEFT????
-			
+					# remove session from all users
+					for user in session.registered_clients:
+						user_id = user.name
+						user.session_id = None
+						session.registered_clients.remove(user)
+
+					try:
+						del session
+					except KeyError:
+						print("Session doesn't exist")
+
+					self.remove_user(user)
+					self.transport.write(bytes('ok:'+"User and session removed", "utf-8"), address)
+
+				else:
+					session.registered_clients.remove(user)
+					self.remove_user(user)
+					self.transport.write(bytes('ok:'+"User removed", "utf-8"), address)
+					return	
+				
+
+
+
+
 		# session server invites an user to session || message format: []
 		elif msg_type == "iu":
 			pass
@@ -596,6 +612,45 @@ class ServerProtocol(DatagramProtocol):
 				split = data_string.split(":")
 				print("hello")
 				print(address)
+
+
+		# TESTING MESSAGES
+		
+		# send how much users are registered in server
+		elif msg_type == "tu":
+			split = data_string.split(":")
+			
+			players = len(self.registered_clients)
+			print(players)
+			message = str(len(self.registered_clients))
+			self.transport.write(bytes('ok:'+message, "utf-8"), address)
+
+
+		# send sessions registered in server
+		elif msg_type == "ts":
+			message = str(len(self.active_sessions))
+			self.transport.write(bytes('ok:'+message, "utf-8"), address)
+
+
+		# send users registered in session
+		elif msg_type == "us":
+			split = data_string.split(":")
+			s_id = split[1]
+
+			session = self.active_sessions[s_id]
+			
+			message = str(len(session.registered_clients))
+
+			self.transport.write(bytes('ok:' + message, "utf-8"), address)
+
+		# clear session and user list
+		elif msg_type == "cl":
+			self.active_sessions.clear()
+			self.registered_clients.clear()
+
+			self.transport.write(bytes('ok:', "utf-8"), address)
+
+
 class Session:
 
 	def __init__(self, session_id, max_clients, server, private, teams):
@@ -609,6 +664,7 @@ class Session:
 
 
 	def register_client_at_session(self, client):
+		client.session_id = self.id
 		self.registered_clients.append(client)
 
 
