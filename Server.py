@@ -105,9 +105,13 @@ class ServerProtocol(DatagramProtocol):
 	# removes a session from active sessions list
 	def remove_session(self, s_id):
 		# users leave session
+
+		print("removing session, " + str(len(self.active_sessions[s_id].registered_clients)))
 		session = self.active_sessions[s_id]
 		for user in session.registered_clients:
-			self.user_leave_session(user)
+			user.session_id = None
+			print("removing " + user.name)
+			#self.user_leave_session(user)
 
 		# quit session from list
 		session.registered_clients.clear()
@@ -116,7 +120,7 @@ class ServerProtocol(DatagramProtocol):
 
 		# remove session
 		try:
-			del self.active_sessions[s_id]
+			del session
 		except KeyError:
 			print("Tried to terminate non-existing session")
 
@@ -128,8 +132,23 @@ class ServerProtocol(DatagramProtocol):
 		# remove user from sessio	
 		session.registered_clients.remove(user)
 
+
 	# register a client in the server
-	def register_client2(self, c_username, c_id, c_ip, c_port, p_ip, p_port, peer_port):
+	def register_client2(self, c_username, c_id, c_ip, c_port):
+		# check if id is already used
+		if self.user_is_registered(c_id): 
+			print("Client %s is already registered." % [c_id])
+			return False
+		else:
+			# create new client object and add it to registered clients list
+			new_client = Client(c_username, c_id, c_ip, c_port)
+			self.registered_clients[c_id] = new_client
+			print("Client registered correctly!")
+			return True
+
+
+	# register a client in the server
+	def register_client3(self, c_username, c_id, c_ip, c_port, p_ip, p_port, peer_port):
 		# check if id is already used
 		if self.user_is_registered(c_id): 
 			print("Client %s is already registered." % [c_id])
@@ -155,6 +174,8 @@ class ServerProtocol(DatagramProtocol):
 	def add_user_to_session(self, user_id, session_id):
 		user = self.registered_clients[user_id]
 		session = self.active_sessions[session_id]
+
+		print("user added to session")
 
 		user.session_id = session_id
 		session.registered_clients.append(user)
@@ -198,9 +219,9 @@ class ServerProtocol(DatagramProtocol):
 			# get message information
 			split = data_string.split(":")
 			username = split[1]	
-			private_ip = split[2]
-			private_port = split[3]
-			public_port = split[4]
+			#private_ip = split[2]
+			#private_port = split[3]
+			#public_port = split[4]
 
 			c_ip, c_port = address
 
@@ -222,13 +243,26 @@ class ServerProtocol(DatagramProtocol):
 			print("Client will be registered, username: " + username + ", id: " + str(c_id) + ", ip: " + c_ip + ", port: " + str(c_port))
 
 			# register client
-			if not self.register_client2(username, str(c_id), c_ip, c_port, private_ip, private_port, public_port): # server internal error at registering
+			if not self.register_client2(username, str(c_id), c_ip, c_port):#, private_ip, private_port, public_port): # server internal error at registering
 				self.transport.write(bytes('e2:'+"server internal error at registering user","utf-8"), address)
 				return
 
 			# send user id || message format: [ok:user_id]
 			self.transport.write(bytes('ok:'+str(c_id),"utf-8"), address)
 			
+		# register information || message format: [user_id:private_ip:private_port:public_port]
+		elif msg_type == "ri":
+			split = data_string.split(":")
+			user_id = split[1]
+			private_ip = split[2]
+			private_port = split[3]
+			public_port = split[4]
+
+			user = self.registered_clients[user_id]
+			user.add_information(private_ip, private_port, public_port)
+
+			# send user id || message format: [ok:user_id]
+			self.transport.write(bytes('ok:',"utf-8"), address)
 
 		# create session || message format: [cr:teams:players:private]
 		elif msg_type == "cs":
@@ -264,6 +298,7 @@ class ServerProtocol(DatagramProtocol):
 				# add player to the session 
 				self.add_user_to_session(player_id, s_id)
 
+				print("sending " + s_id)
 				# send ok message to client || message format [ok:session_id]
 				self.transport.write(bytes('ok:'+s_id,"utf-8"), address)
 
@@ -286,6 +321,7 @@ class ServerProtocol(DatagramProtocol):
 
 			# player is already in a session (probably packet lost)
 			s_id = self.get_user_session_id(user_id) # already in session
+			print("s_id = " + str(s_id))
 			if not s_id == None:
 				session = self.active_sessions[s_id]
 				self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
@@ -319,7 +355,8 @@ class ServerProtocol(DatagramProtocol):
 								self.transport.write(bytes('sp:' + str(i) + ":" + session_player.username, "utf-8"), address)
 							'''
 							# add client to session
-							session.register_client_at_session(player)
+							#session.register_client_at_session(player)
+							self.add_user_to_session(user_id, session.id)
 							session_finded = True
 
 							# print session users
@@ -461,12 +498,12 @@ class ServerProtocol(DatagramProtocol):
 				return
 
 			# user can't remove session when game is starting
-			session = self.active_sessions[session_server.session_id]
+			'''session = self.active_sessions[session_server.session_id]
 			print("Client max: " + str(session.client_max) + ", registered clients: " + str(len(session.registered_clients)))
 			if len(session.registered_clients) == int(session.client_max):
 				print("session is full")
 				self.transport.write(bytes('er:'+"Session is full, you can't leave it now!", "utf-8"), address)
-				return	
+				return	'''
 			
 
 			# remove session
@@ -703,7 +740,7 @@ class Client:
 		self.received_peer_info = True
 
 	#called when users registers
-	def __init__(self, c_username, c_name, c_ip, c_port, private_ip, private_port, peer_port):
+	def __init__(self, c_username, c_name, c_ip, c_port):#, private_ip, private_port, peer_port):
 		self.username = c_username
 		self.name = c_name
 		self.session_id = None
@@ -713,20 +750,29 @@ class Client:
 		self.received_peer_info = False	
 
 		# peer socket in client
-		self.peer_port = peer_port
+		self.peer_port = None#peer_port
 
 		# local net socket
-		self.private_ip = private_ip
-		self.private_port = private_port
+		self.private_ip = None#private_ip
+		self.private_port = None#private_port
 		
 	def add_ip_and_port(self, c_ip, c_port):
 		self.ip = c_ip
 		self.port = c_port
-		
+	
+	def add_information(self, c_private_ip, c_private_port, c_peer_port):
+		# peer socket in client
+		self.peer_port = c_peer_port#peer_port
+
+		# local net socket
+		self.private_ip = c_private_ip#private_ip
+		self.private_port = c_private_port#private_port
+
 	def set_session(self, s_id):
 		self.session_id = s_id
 
 	def leave_session(self):
+		print(self.name + " leaving session")
 		self.session_id = None
 
 
