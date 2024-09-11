@@ -7,6 +7,8 @@ import string
 import random
 
 
+MAPS = {"Default"}
+
 def address_to_string(address):
 	ip, port = address
 	print(ip)
@@ -26,6 +28,11 @@ class ServerProtocol(DatagramProtocol):
 	# Helper functions #
 	#########################
 
+	# check if map exists
+	def map_exists(self, map_name):
+		if map_name not in MAPS:
+			return False
+		return True
 
 	# checks if a username is valid
 	def check_username(self, username):
@@ -162,13 +169,13 @@ class ServerProtocol(DatagramProtocol):
 
 
 	# create a new session
-	def create_session2(self, s_id, players, private, teams):
+	def create_session2(self, s_id, players, private, teams, map_name):
 		# check is session exsit already?
 		if s_id in self.active_sessions.keys():
 			print("session with that id already created")
 
 		# create session and add it to the list
-		self.active_sessions[s_id] = Session(s_id, players, self, private, teams)
+		self.active_sessions[s_id] = Session(s_id, players, self, private, teams, map_name)
 
 
 	def add_user_to_session(self, user_id, session_id):
@@ -272,35 +279,42 @@ class ServerProtocol(DatagramProtocol):
 			teams = split[2]   # boolean
 			players = split[3] # int
 			private = split[4] # boolean
+			map_name = split[5] # String
 
 			# user doesn't exists
 			if not self.user_is_registered(player_id):
 				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
-
+			
+			# check if map exists
+			if not self.map_exists(map_name):
+				self.transport.write(bytes('er: Map does not exist', 'utf8'), address)
+				return
+			
 			# player already created a session (probably ok message lost)
 			if self.registered_clients[player_id].session_id != None:
 				# player is already in a session, get session id and send to player
 				s_id = self.get_user_session_id(player_id)
-				self.transport.write(bytes('ok:'+s_id,"utf-8"), address)
+				self.transport.write(bytes('ok:'+s_id + ":" + map_name,"utf-8"), address)
+				return
 			
 			# create session
-			else:
-				# generate random id for the session			
-				s_id = self.generate_random_id()
+			#else:
+			# generate random id for the session			
+			s_id = self.generate_random_id()
 
-				# print session id
-				print("Session with id: " + s_id + "created")
+			# print session id
+			print("Session with id: " + s_id + "created")
 
-				# add session to session list
-				self.create_session2(s_id, players, private, teams)
+			# add session to session list
+			self.create_session2(s_id, players, private, teams, map_name)
 
-				# add player to the session 
-				self.add_user_to_session(player_id, s_id)
+			# add player to the session 
+			self.add_user_to_session(player_id, s_id)
 
-				print("sending " + s_id)
-				# send ok message to client || message format [ok:session_id]
-				self.transport.write(bytes('ok:'+s_id,"utf-8"), address)
+			print("sending " + s_id)
+			# send ok message to client || message format [ok:session_id]
+			self.transport.write(bytes('ok:'+s_id + ':' + map_name,"utf-8"), address)
 
 
 		# client asked to find session with specified properties || message format: [fs:user_id:teams:players]
@@ -310,11 +324,17 @@ class ServerProtocol(DatagramProtocol):
 			user_id = split[1]
 			teams = split[2]
 			players = split[3]
+			map_name = split[4] # string
 
 			# user doesn't exists
 			if not self.user_is_registered(user_id):
 				self.transport.write(bytes('er:'+"User doesn't exists", "utf-8"), address)
 				return 
+
+			# check if map exists
+			if not self.map_exists(map_name):
+				self.transport.write(bytes('er: Map does not exist', 'utf8'), address)
+				return
 
 			player = self.registered_clients[user_id]
 
@@ -324,7 +344,7 @@ class ServerProtocol(DatagramProtocol):
 			print("s_id = " + str(s_id))
 			if not s_id == None:
 				session = self.active_sessions[s_id]
-				self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
+				self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" +session.map_name, "utf-8"), address)
 				return
 
 			else: # player not in session
@@ -338,7 +358,7 @@ class ServerProtocol(DatagramProtocol):
 					# check if session is public
 					if session.private=="false": # public
 						# check session properties
-						if session.client_max == players and session.teams == teams and len(session.registered_clients) < int(session.client_max): # check that session has place to add the user
+						if session.client_max == players and session.teams == teams and len(session.registered_clients) < int(session.client_max) and map_name == session.map_name: # check that session has place to add the user
 							# send new player to all players in the room
 							'''for s_player in session.registered_clients:
 								p_address = (s_player.ip, s_player.port)
@@ -364,7 +384,7 @@ class ServerProtocol(DatagramProtocol):
 							print("clients registered at session: " + str(len(session.registered_clients)))
 
 							# send reponse to user || message format: [ok:session_id:teams:private:player_count:actual_player_count]
-							self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)), "utf-8"), address)
+							self.transport.write(bytes('ok:' + session.id + ":" + session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + session.map_name, "utf-8"), address)
 							
 				# no session with thoes properties
 				if not session_finded:
@@ -411,7 +431,7 @@ class ServerProtocol(DatagramProtocol):
 			player = self.registered_clients[user_id]
 			if player.session_id != None:
 				session = self.active_sessions[player.session_id]
-				self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + player.session_id, "utf-8"), address)
+				self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + player.session_id + ":" + session.map_name, "utf-8"), address)
 				return
 
 
@@ -440,7 +460,7 @@ class ServerProtocol(DatagramProtocol):
 			print("clients registered at session: " + str(len(session.registered_clients)))
 
 			# send reponse to user
-			self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + player.session_id, "utf-8"), address)
+			self.transport.write(bytes('ok:'+session.teams+":"+session.private+":"+session.client_max+":"+str(len(session.registered_clients)) + ":" + player.session_id + ":" + session.map_name, "utf-8"), address)
 
 
 		# an user leaves a session || message format: [ls:user_id]
@@ -690,7 +710,7 @@ class ServerProtocol(DatagramProtocol):
 
 class Session:
 
-	def __init__(self, session_id, max_clients, server, private, teams):
+	def __init__(self, session_id, max_clients, server, private, teams, map_name):
 		self.id = session_id
 		self.client_max = max_clients
 		self.server = server
@@ -698,7 +718,7 @@ class Session:
 		#new attributes
 		self.private = private
 		self.teams = teams
-
+		self.map_name = map_name
 
 	def register_client_at_session(self, client):
 		client.session_id = self.id
